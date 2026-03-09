@@ -76,11 +76,11 @@ async function runTradingRules(holding, stockData) {
     // 记录到数据库
     await db.addAlert(alert);
     
-    // 发送飞书通知
+    // 发送飞书通知（传入db用于检查重复）
     await feishu.sendAlert({
       stock: holding.name,
       ...alert
-    });
+    }, db);
   }
   
   return analysis;
@@ -666,6 +666,72 @@ cron.schedule('0 * * * *', async () => {
     console.log('[定时任务] 检查完成');
   } catch (error) {
     console.error('[定时任务] 检查失败:', error.message);
+  }
+});
+
+// 大盘云图代理（去除广告和不需要的内容）
+app.get('/api/cloudmap-proxy', async (req, res) => {
+  try {
+    const https = require('https');
+    const http = require('http');
+    
+    const targetUrl = 'https://52etf.site/';
+    
+    const getPage = () => {
+      return new Promise((resolve, reject) => {
+        const client = targetUrl.startsWith('https') ? https : http;
+        client.get(targetUrl, (resp) => {
+          let data = '';
+          resp.on('data', (chunk) => data += chunk);
+          resp.on('end', () => resolve(data));
+        }).on('error', reject);
+      });
+    };
+    
+    let html = await getPage();
+    
+    // 替换相对路径为绝对路径
+    html = html.replace(/href="\//g, 'href="https://52etf.site/');
+    html = html.replace(/src="\//g, 'src="https://52etf.site/');
+    html = html.replace(/href='/g, "href='https://52etf.site/");
+    html = html.replace(/src='/g, "src='https://52etf.site/");
+    
+    // 去除不需要的内容
+    const removePatterns = [
+      /<div class="header"[\s\S]*?<\/div>/gi,
+      /<div class="footer"[\s\S]*?<\/div>/gi,
+      /<div class="scgl_s1"[\s\S]*?<\/div>/gi,
+      /<div class="navBox"[\s\S]*?<\/div>/gi,
+      /<div class="stock_inf"[\s\S]*?<\/div>/gi,
+      /<div class="jrj-where"[\s\S]*?<\/div>/gi,
+      /<div class="pinglunIfr"[\s\S]*?<\/div>/gi,
+      /<div class="zn_tip"[\s\S]*?<\/div>/gi,
+      /<div class="zn_tip_min"[\s\S]*?<\/div>/gi,
+      /<div class="ad"[\s\S]*?<\/div>/gi,
+      /<a[^>]*>收藏网址[^\n<>]+<\/a>/gi,
+      /52ETF\.site/gi,
+      /52etf\.site/gi,
+      /52ETF/gi,
+      /dapanyuntu/gi,
+      /防丢网址：[^\n<>]+/gi,
+      /站长知识星球[^\n<>]+/gi,
+      /低佣开户[^\n<>]+/gi,
+      /万0\.85免五开户[^\n<>]+/gi,
+    ];
+    
+    removePatterns.forEach(pattern => {
+      html = html.replace(pattern, '');
+    });
+    
+    // 清理空标签和多余空白
+    html = html.replace(/\s+/g, ' ');
+    html = html.replace(/>\s+</g, '><');
+    
+    res.setHeader('Content-Type', 'text/html;charset=utf-8');
+    res.send(html);
+  } catch (error) {
+    console.error('CloudMap proxy error:', error);
+    res.status(500).send('Proxy error');
   }
 });
 

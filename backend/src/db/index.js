@@ -240,6 +240,22 @@ class Database {
     });
   }
 
+  // 检查是否最近已发送相同提醒（1小时内）
+  async hasRecentAlert(code, action) {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        `SELECT COUNT(*) as count FROM alerts 
+         WHERE code = ? AND action = ? 
+         AND datetime(created_at) > datetime('now', '-1 hour')`,
+        [code, action],
+        (err, row) => {
+          if (err) reject(err);
+          else resolve(row.count > 0);
+        }
+      );
+    });
+  }
+
   // ========== 翻倍推荐股票相关操作 ==========
 
   // 添加或更新翻倍推荐股票

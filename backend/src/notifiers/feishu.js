@@ -57,15 +57,25 @@ class FeishuNotifier {
   /**
    * 发送股票提醒
    */
-  async sendAlert({ stock, code, action, reason, currentPrice, avgCost, changePercent }) {
+  async sendAlert({ stock, code, action, reason, currentPrice, avgCost, changePercent }, db = null) {
     if (!this.enabled) {
       console.log('[Feishu] Webhook not configured, skipping notification');
       return;
     }
 
-    // 检查是否重复
+    // 检查内存中是否重复（1小时内）
     if (!this.shouldSend(code, action, currentPrice)) {
       return;
+    }
+
+    // 检查数据库中是否最近已发送相同提醒（1小时内）
+    if (db) {
+      const hasRecent = await db.hasRecentAlert(code, action);
+      if (hasRecent) {
+        console.log(`[Feishu] 跳过数据库重复提醒: ${code} ${action}`);
+        this.recordAlert(code, action, currentPrice);
+        return;
+      }
     }
 
     const profit = ((currentPrice - avgCost) / avgCost * 100).toFixed(2);

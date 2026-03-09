@@ -4,6 +4,7 @@ import axios from 'axios'
 import StockChart from './components/StockChart'
 import HotStockAnalysis from './components/HotStockAnalysis'
 import TradeRuleMonitor from './components/TradeRuleMonitor'
+import CloudMap from './components/CloudMap'
 import './App.css'
 
 const API_BASE = 'http://localhost:3001/api'
@@ -1105,6 +1106,10 @@ function App() {
     navigate('/analysis')
   }
   
+  const goToCloudMap = () => {
+    navigate('/cloudmap')
+  }
+  
   const goToHome = () => {
     navigate('/')
   }
@@ -1128,21 +1133,37 @@ function App() {
             </span>
           ))}
         </div>
-        {location.pathname === '/' ? (
+        <div style={{ display: 'flex', gap: '8px' }}>
           <button
             className="btn-hot-stock-analysis"
-            onClick={goToAnalysis}
+            onClick={goToCloudMap}
+            style={{ background: '#e53e3e' }}
           >
-            🔥 爆款投资股票分析
+            📊 大盘云图
           </button>
-        ) : (
-          <button
-            className="btn-hot-stock-analysis"
-            onClick={goToHome}
-          >
-            ← 返回首页
-          </button>
-        )}
+          {location.pathname === '/' ? (
+            <button
+              className="btn-hot-stock-analysis"
+              onClick={goToAnalysis}
+            >
+              🔥 爆款投资股票分析
+            </button>
+          ) : location.pathname === '/cloudmap' ? (
+            <button
+              className="btn-hot-stock-analysis"
+              onClick={goToHome}
+            >
+              ← 返回首页
+            </button>
+          ) : (
+            <button
+              className="btn-hot-stock-analysis"
+              onClick={goToHome}
+            >
+              ← 返回首页
+            </button>
+          )}
+        </div>
       </header>
 
       <Routes>
@@ -1152,18 +1173,16 @@ function App() {
             onBack={goToHome} 
             holdings={holdings}
             onAddToHoldings={(stock) => {
-              // 添加股票到持仓
               setStockCode(stock.code);
               setStockName(stock.name);
               setBuyPrice(stock.currentPrice.toString());
               setQuantity('100');
-              // 切换到主页面
               goToHome();
-              // 显示提示
               setAnalyzeMessage({ type: 'success', text: `已添加 ${stock.name} 到持仓表单，请确认添加` });
             }}
           />
         } />
+        <Route path="/cloudmap" element={<CloudMap />} />
       </Routes>
     </div>
   )
