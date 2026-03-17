@@ -95,35 +95,60 @@ class KLineAPI {
    * @param {number} days - 获取天数，默认60天
    */
   async getDailyKLine(code, days = 60) {
-    try {
-      // 使用腾讯财经K线接口
-      const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,,,${days},qfq`;
-      const response = await axios.get(url, { timeout: 10000 });
-      
-      if (response.data && response.data.data && response.data.data[code]) {
-        const data = response.data.data[code];
-        const klines = data.day || data.qfqday || [];
-        
-        // 解析K线数据 [日期, 开盘, 收盘, 最低, 最高, 成交量]
-        return klines.map(item => {
-          const [date, open, close, low, high, volume] = item;
-          return {
-            date: date,  // YYYY-MM-DD
-            open: parseFloat(open),
-            close: parseFloat(close),
-            low: parseFloat(low),
-            high: parseFloat(high),
-            volume: parseInt(volume),
-            change: parseFloat(((parseFloat(close) - parseFloat(open)) / parseFloat(open) * 100).toFixed(2))
-          };
-        });
+    // 尝试多个API源
+    const sources = [
+      // 腾讯qfq接口（带前复权，数据较全）
+      async () => {
+        const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=kline_qfq&param=${code},day,,,${days},qfq`;
+        const response = await axios.get(url, { timeout: 10000 });
+        const text = response.data;
+        const match = text.match(/kline_qfq=({.+})/);
+        if (!match) return null;
+        const data = JSON.parse(match[1]);
+        const klines = data?.data?.[code]?.qfqday || [];
+        if (klines.length === 0) return null;
+        return klines.map(item => ({
+          date: item[0],
+          open: parseFloat(item[1]),
+          close: parseFloat(item[2]),
+          high: parseFloat(item[3]),
+          low: parseFloat(item[4]),
+          volume: parseInt(item[5]),
+          change: 0
+        }));
+      },
+      // 腾讯非qfq接口
+      async () => {
+        const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,,,${days}`;
+        const response = await axios.get(url, { timeout: 10000 });
+        const data = response.data?.data?.[code];
+        const klines = data?.day || data?.qfqday || [];
+        if (klines.length === 0) return null;
+        return klines.map(item => ({
+          date: item[0],
+          open: parseFloat(item[1]),
+          close: parseFloat(item[2]),
+          high: parseFloat(item[3]),
+          low: parseFloat(item[4]),
+          volume: parseInt(item[5]),
+          change: 0
+        }));
       }
-      
-      return [];
-    } catch (error) {
-      console.error('Daily KLine API Error:', error.message);
-      return this.getMockDailyData(code, days);
+    ];
+    
+    for (const source of sources) {
+      try {
+        const result = await source();
+        if (result && result.length > 0) {
+          return result;
+        }
+      } catch (e) {
+        console.log('K-line source failed, trying next:', e.message);
+      }
     }
+    
+    console.error('All K-line sources failed for:', code);
+    return [];
   }
   
   /**

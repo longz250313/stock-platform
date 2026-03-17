@@ -1,0 +1,481 @@
+import React, { useState, useEffect, useCallback } from 'react'
+import axios from 'axios'
+import '../App.css'
+import StockChart from './StockChart'
+
+const API_BASE = '/api'
+
+function Elite2026Page({ holdings, onAddToHoldings }) {
+  const [elite2026Data, setElite2026Data] = useState([])
+  const [elite2026Loading, setElite2026Loading] = useState(false)
+  const [elite2026Updated, setElite2026Updated] = useState(null)
+  const [elite2026Progress, setElite2026Progress] = useState({ current: 0, total: 0, phase: '', isScanning: false })
+  const [scanHistory, setScanHistory] = useState([])
+  const [selectedScanTime, setSelectedScanTime] = useState(null)
+  const [dataSourceInfo, setDataSourceInfo] = useState({ time: '', source: '' })
+  const [filterType, setFilterType] = useState('all')
+  const [sortField, setSortField] = useState(null)
+  const [sortDir, setSortDir] = useState('desc')
+
+  const [showBacktest, setShowBacktest] = useState(false)
+  const [backtestForm, setBacktestForm] = useState({ code: '', name: '', date: '', quantity: 100 })
+  const [backtestResult, setBacktestResult] = useState(null)
+  const [backtestLoading, setBacktestLoading] = useState(false)
+
+  const [showFeishuConfig, setShowFeishuConfig] = useState(false)
+  const [feishuWebhook, setFeishuWebhook] = useState('')
+  const [feishuLoading, setFeishuLoading] = useState(false)
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('desc')
+    }
+  }
+  const [selectedStock, setSelectedStock] = useState(null)
+
+  const runBacktest = async () => {
+    if (!backtestForm.code || !backtestForm.date || !backtestForm.quantity) {
+      alert('请填写完整的回测信息')
+      return
+    }
+    setBacktestLoading(true)
+    try {
+      const res = await axios.post(`${API_BASE}/elite-2026/backtest`, {
+        code: backtestForm.code,
+        date: backtestForm.date,
+        quantity: parseInt(backtestForm.quantity)
+      })
+      if (res.data.success) {
+        setBacktestResult(res.data.data)
+      } else {
+        alert(res.data.error || '回测失败')
+      }
+    } catch (error) {
+      alert('回测请求失败: ' + error.message)
+    }
+    setBacktestLoading(false)
+  }
+
+  const saveFeishuConfig = async () => {
+    if (!feishuWebhook) {
+      alert('请输入Webhook地址')
+      return
+    }
+    setFeishuLoading(true)
+    try {
+      const res = await axios.post(`${API_BASE}/feishu/config`, { webhook: feishuWebhook })
+      if (res.data.success) {
+        alert('飞书配置保存成功')
+        setShowFeishuConfig(false)
+      } else {
+        alert(res.data.error || '保存失败')
+      }
+    } catch (error) {
+      alert('保存失败: ' + error.message)
+    }
+    setFeishuLoading(false)
+  }
+
+  // 获取扫描进度
+  const fetchElite2026Progress = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/elite-2026/progress`)
+      if (res.data.success) {
+        const data = res.data.data || {}
+        const wasScanning = elite2026Progress.isScanning
+        const isNowComplete = wasScanning && !data.isScanning
+        
+        setElite2026Progress({
+          current: data.current || 0,
+          total: data.total || 0,
+          phase: data.phase || '',
+          isScanning: data.isScanning || false,
+          passedCount: data.passedCount || 0,
+          part1Count: data.part1Count || 0,
+          part2Count: data.part2Count || 0
+        })
+        
+        // 扫描过程中也显示实时数据，只有在没有选择历史记录时才更新
+        if (data.results && data.results.length > 0 && !selectedScanTime) {
+          setElite2026Data(data.results)
+        }
+        
+        // 扫描刚完成时：自动加载最新历史记录
+        if (isNowComplete) {
+          fetchScanHistory()
+          // 自动选择最新的历史记录
+          setTimeout(async () => {
+            try {
+              const historyRes = await axios.get(`${API_BASE}/elite-2026/history?limit=1`)
+              if (historyRes.data.success && historyRes.data.data?.[0]) {
+                const latestScan = historyRes.data.data[0]
+                selectScanRecord(latestScan.id, latestScan.scan_time)
+              }
+            } catch (e) {}
+          }, 500)
+        }
+        
+        // 扫描完成时更新数据源信息
+        if (!data.isScanning && data.lastUpdated) {
+          const firstResult = data.results?.[0]
+          if (firstResult) {
+            setDataSourceInfo({
+              time: firstResult.dataTime || data.lastUpdated,
+              source: firstResult.dataSource || '腾讯财经'
+            })
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Fetch progress error:', error)
+    }
+  }, [elite2026Progress.isScanning])
+
+  // 获取扫描历史记录 - 放在前面避免循环依赖
+  const fetchScanHistory = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/elite-2026/history`)
+      console.log('History response:', res.data)
+      if (res.data.success) {
+        setScanHistory(res.data.data || [])
+        console.log('Scan history set:', res.data.data?.length)
+      }
+    } catch (error) {
+      console.error('Fetch history error:', error)
+    }
+  }, [])
+
+  // 触发全量扫描
+  const startElite2026Scan = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/elite-2026/all`)
+      if (res.data.success) {
+        setElite2026Loading(true)
+        // 设置当前数据源信息
+        const now = new Date()
+        setDataSourceInfo({
+          time: now.toLocaleString('zh-CN'),
+          source: '实时扫描中...'
+        })
+      }
+    } catch (error) {
+      console.error('启动扫描失败:', error)
+    }
+  }, [])
+
+  // 选择历史扫描记录
+  const selectScanRecord = useCallback(async (scanId, scanTime) => {
+    try {
+      console.log('Selecting scan:', scanId, scanTime)
+      setSelectedScanTime(scanId)
+      const res = await axios.get(`${API_BASE}/elite-2026/scan/${scanId}`)
+      console.log('Scan results:', res.data.success, res.data.total)
+      if (res.data.success) {
+        setElite2026Data(res.data.data || [])
+        setElite2026Updated(new Date(scanTime))
+        // 设置数据源信息
+        const firstItem = res.data.data?.[0]
+        setDataSourceInfo({
+          time: firstItem?.dataTime || scanTime,
+          source: '历史扫描'
+        })
+      }
+    } catch (error) {
+      console.error('Select scan error:', error)
+    }
+  }, [])
+
+  // 轮询扫描进度
+  useEffect(() => {
+    fetchScanHistory()
+    const interval = setInterval(() => {
+      fetchElite2026Progress()
+      fetchScanHistory()
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [fetchElite2026Progress, fetchScanHistory])
+
+  const passedCount = elite2026Data.filter(item => item.passed).length
+  const part1Count = elite2026Data.filter(item => item.part1Passed).length
+  const part2Count = elite2026Data.filter(item => item.part2Passed).length
+  const progressPercent = elite2026Progress.total > 0 
+    ? Math.round((elite2026Progress.current / elite2026Progress.total) * 100) 
+    : 0
+
+  const filteredData = elite2026Data.filter(item => {
+    if (filterType === 'all') return true
+    if (filterType === 'passed') return item.passed
+    if (filterType === 'part1') return item.part1Passed && !item.passed
+    if (filterType === 'part2') return item.part2Passed && !item.passed
+    return true
+  }).sort((a, b) => {
+    if (!sortField) return 0
+    const aVal = a[sortField] || 0
+    const bVal = b[sortField] || 0
+    return sortDir === 'asc' ? aVal - bVal : bVal - aVal
+  })
+
+  return (
+    <div className="elite2026-page">
+      <div className="page-header">
+        <button className="back-btn" onClick={() => window.history.back()}>← 返回</button>
+        <div className="title-wrapper">
+          <h1>📊 T+1策略 (精英起爆2026增强版)</h1>
+          {dataSourceInfo.time && (
+            <span className="data-source-info">
+              数据时间: {dataSourceInfo.time} | 来源: {dataSourceInfo.source}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="panel-header">
+        <div className="header-actions">
+          {elite2026Progress.isScanning && (
+            <span className="scan-progress">
+              扫描中 {elite2026Progress.current}/{elite2026Progress.total} ({progressPercent}%)
+            </span>
+          )}
+          {elite2026Updated && !elite2026Progress.isScanning && (
+            <span className="refresh-time">
+              更新于 {elite2026Updated.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
+          )}
+          {elite2026Loading && <span className="loading-text">分析中...</span>}
+          <button
+            className="btn-refresh"
+            onClick={startElite2026Scan}
+            disabled={elite2026Loading || elite2026Progress.isScanning}
+            title="开始全量扫描"
+          >
+            🚀 开始扫描
+          </button>
+          <button
+            className="btn-refresh"
+            onClick={() => setShowBacktest(true)}
+            style={{ marginLeft: 8, background: '#48bb78' }}
+          >
+            📊 回测
+          </button>
+          <button
+            className="btn-refresh"
+            onClick={() => setShowFeishuConfig(true)}
+            style={{ marginLeft: 8, background: '#ed8936' }}
+          >
+            🔔 飞书提醒
+          </button>
+        </div>
+      </div>
+
+      {/* 扫描进度条 */}
+      {elite2026Progress.isScanning && (
+        <div className="elite-progress-bar">
+          <div className="elite-progress-track">
+            <div className="elite-progress-fill" style={{ width: `${progressPercent}%` }}></div>
+          </div>
+          <div className="elite-progress-stats">
+            <span>已扫描: {elite2026Progress.current}/{elite2026Progress.total}</span>
+            <span>阶段: {elite2026Progress.phase === 'fetching' ? '获取数据' : elite2026Progress.phase === 'analyzing' ? '分析中' : '初始化'}</span>
+          </div>
+          <div className="elite-progress-detail">
+            <span className="stat-passed">🚀全量通过: {elite2026Progress.passedCount || 0}</span>
+            <span className="stat-part1">📍形态过滤: {elite2026Progress.part1Count || 0}</span>
+            <span className="stat-part2">⚡实时爆点: {elite2026Progress.part2Count || 0}</span>
+          </div>
+        </div>
+      )}
+
+{/* 历史扫描记录按钮 */}
+      {scanHistory.length > 0 && (
+        <div className="scan-history-bar">
+          <span className="history-label">历史扫描:</span>
+          {scanHistory.slice(0, 10).map((scan) => (
+            <button
+              key={scan.id}
+              className={`history-btn ${selectedScanTime === scan.id ? 'active' : ''}`}
+              onClick={() => selectScanRecord(scan.id, scan.scan_time)}
+            >
+              {new Date(scan.scan_time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="elite-summary">
+        <div className={`summary-stat ${filterType === 'all' ? 'active' : ''}`} onClick={() => setFilterType('all')}>
+          <span className="stat-value">{elite2026Data.length}</span>
+          <span className="stat-label">股票总数</span>
+        </div>
+        <div className={`summary-stat part1 ${filterType === 'part1' ? 'active' : ''}`} onClick={() => setFilterType(filterType === 'part1' ? 'all' : 'part1')}>
+          <span className="stat-value">{part1Count}</span>
+          <span className="stat-label">形态通过</span>
+        </div>
+        <div className={`summary-stat part2 ${filterType === 'part2' ? 'active' : ''}`} onClick={() => setFilterType(filterType === 'part2' ? 'all' : 'part2')}>
+          <span className="stat-value">{part2Count}</span>
+          <span className="stat-label">爆点通过</span>
+        </div>
+        <div className={`summary-stat final ${filterType === 'passed' ? 'active' : ''}`} onClick={() => setFilterType(filterType === 'passed' ? 'all' : 'passed')}>
+          <span className="stat-value">{passedCount}</span>
+          <span className="stat-label">全量通过</span>
+        </div>
+      </div>
+
+      <div className="elite-table-wrapper">
+        {filteredData.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">🚀</div>
+            <p>暂无T+1策略分析</p>
+            <span>点击右上角开始全量扫描</span>
+          </div>
+        ) : (
+          <table className="elite-table">
+            <thead>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th className="sortable" onClick={() => handleSort('currentPrice')}>
+                  现价 {sortField === 'currentPrice' && (sortDir === 'asc' ? '↑' : '↓')}
+                </th>
+                <th className="sortable" onClick={() => handleSort('changePercent')}>
+                  涨幅比 {sortField === 'changePercent' && (sortDir === 'asc' ? '↑' : '↓')}
+                </th>
+                <th className="sortable" onClick={() => handleSort('change')}>
+                  涨跌比 {sortField === 'change' && (sortDir === 'asc' ? '↑' : '↓')}
+                </th>
+                <th className="sortable" onClick={() => handleSort('riseSpeed')}>
+                  涨速 {sortField === 'riseSpeed' && (sortDir === 'asc' ? '↑' : '↓')}
+                </th>
+                <th className="sortable" onClick={() => handleSort('turnover')}>
+                  换手率 {sortField === 'turnover' && (sortDir === 'asc' ? '↑' : '↓')}
+                </th>
+                <th>今日最高</th>
+                <th>今日最低</th>
+                <th>今日开价</th>
+                <th>今日收价</th>
+                <th className="sortable" onClick={() => handleSort('volumeRatio')}>
+                  量比 {sortField === 'volumeRatio' && (sortDir === 'asc' ? '↑' : '↓')}
+                </th>
+                <th>流通值</th>
+                <th>所属板块</th>
+                <th>数据时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredData.slice(0, 200).map(item => (
+                <tr key={item.code} className={item.passed ? 'passed-row' : item.part1Passed ? 'part1-row' : ''} onClick={() => setSelectedStock(item)} style={{ cursor: 'pointer' }}>
+                  <td>{item.code}</td>
+                  <td>{item.name}</td>
+                  <td className={item.changePercent >= 0 ? 'up' : 'down'}>¥{item.currentPrice?.toFixed(2)}</td>
+                  <td className={item.changePercent >= 0 ? 'up' : 'down'}>{item.changePercent >= 0 ? '+' : ''}{item.changePercent?.toFixed(2)}%</td>
+                  <td className={item.change >= 0 ? 'up' : 'down'}>{item.change >= 0 ? '+' : ''}{item.change?.toFixed(2)}</td>
+                  <td className={item.riseSpeed >= 0 ? 'up' : 'down'}>{item.riseSpeed?.toFixed(2)}%</td>
+                  <td>{item.turnover?.toFixed(2)}%</td>
+                  <td>¥{item.highPrice?.toFixed(2)}</td>
+                  <td>¥{item.lowPrice?.toFixed(2)}</td>
+                  <td>¥{item.openPrice?.toFixed(2)}</td>
+                  <td>¥{item.closePrice?.toFixed(2)}</td>
+                  <td>{item.volumeRatio || '--'}</td>
+                  <td>{(item.circValue / 10000)?.toFixed(1)}亿</td>
+                  <td className="sector">{item.sector || '--'}</td>
+                  <td className="data-time">{item.dataTime ? (() => {
+                    const s = String(item.dataTime);
+                    if (s.length === 14) {
+                      return `${s.slice(4,6)}-${s.slice(6,8)} ${s.slice(8,10)}:${s.slice(10,12)}:${s.slice(12,14)}`;
+                    }
+                    if (s.length === 10 && s.includes('-')) {
+                      return s;
+                    }
+                    return s;
+                  })() : '--'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {/* 弹框显示K线图 */}
+      {selectedStock && (
+        <div className="stock-modal-overlay" onClick={() => setSelectedStock(null)}>
+          <div className="stock-modal-content" onClick={e => e.stopPropagation()}>
+            <div className="stock-modal-header">
+              <h3>{selectedStock.name} ({selectedStock.code})</h3>
+              <button className="close-btn" onClick={() => setSelectedStock(null)}>×</button>
+            </div>
+            <div className="stock-modal-chart">
+              <StockChart code={selectedStock.code} name={selectedStock.name} />
+            </div>
+            {selectedStock.signals && (
+              <div className="stock-signals-panel">
+                <div className="signals-section">
+                  <h4>形态过滤</h4>
+                  <div className="signals-grid">
+                    <div className={`signal-badge ${selectedStock.signals.BIG_SUN ? 'pass' : 'fail'}`}>
+                      基因检测 {selectedStock.signals.BIG_SUN ? '✓' : '✗'}
+                    </div>
+                    <div className={`signal-badge ${selectedStock.signals.RISE_20 ? 'pass' : 'fail'}`}>
+                      趋势强度 {selectedStock.signals.RISE_20 ? '✓' : '✗'}
+                    </div>
+                    <div className={`signal-badge ${selectedStock.signals.BULL_ALIGN ? 'pass' : 'fail'}`}>
+                      均线多头 {selectedStock.signals.BULL_ALIGN ? '✓' : '✗'}
+                    </div>
+                    <div className={`signal-badge ${selectedStock.signals.NEAR_MA5 ? 'pass' : 'fail'}`}>
+                      贴近5日线 {selectedStock.signals.NEAR_MA5 ? '✓' : '✗'}
+                    </div>
+                    <div className={`signal-badge ${selectedStock.signals.LIMIT_2DAYS ? 'pass' : 'fail'}`}>
+                      洗盘确认 {selectedStock.signals.LIMIT_2DAYS ? '✓' : '✗'}
+                    </div>
+                  </div>
+                </div>
+                <div className="signals-section">
+                  <h4>实时爆点</h4>
+                  <div className="signals-grid">
+                    <div className={`signal-badge ${selectedStock.signals.OPEN_RANGE ? 'pass' : 'fail'}`}>
+                      开盘区间 {selectedStock.signals.OPEN_RANGE ? '✓' : '✗'}
+                    </div>
+                    <div className={`signal-badge ${selectedStock.signals.RISE_POWER ? 'pass' : 'fail'}`}>
+                      动能确认 {selectedStock.signals.RISE_POWER ? '✓' : '✗'}
+                    </div>
+                    <div className={`signal-badge ${selectedStock.signals.VOL_POWER ? 'pass' : 'fail'}`}>
+                      动态量能 {selectedStock.signals.VOL_POWER ? '✓' : '✗'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+        {showBacktest && (
+          <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}} onClick={() => setShowBacktest(false)}>
+            <div style={{background: '#fff', borderRadius: 12, padding: 20, width: 400}} onClick={e => e.stopPropagation()}>
+              <h3>T+1策略回测</h3>
+              <div><label>股票代码</label><input value={backtestForm.code} onChange={e => setBacktestForm({...backtestForm, code: e.target.value})} placeholder="sh600519" /></div>
+              <div><label>回测日期</label><input type="date" value={backtestForm.date} onChange={e => setBacktestForm({...backtestForm, date: e.target.value})} /></div>
+              <div><label>买入数量</label><input type="number" value={backtestForm.quantity} onChange={e => setBacktestForm({...backtestForm, quantity: e.target.value})} /></div>
+              <button onClick={runBacktest}>{backtestLoading ? '回测中...' : '开始回测'}</button>
+              {backtestResult && <div>买入价: ¥{backtestResult.buyPrice} 卖出价: ¥{backtestResult.sellPrice} 收益: ¥{backtestResult.profit}</div>}
+              <button onClick={() => setShowBacktest(false)}>关闭</button>
+            </div>
+          </div>
+        )}
+
+        {showFeishuConfig && (
+          <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}} onClick={() => setShowFeishuConfig(false)}>
+            <div style={{background: '#fff', borderRadius: 12, padding: 20, width: 400}} onClick={e => e.stopPropagation()}>
+              <h3>飞书消息提醒</h3>
+              <p>配置Webhook后自动推送</p>
+              <div><label>Webhook</label><input value={feishuWebhook} onChange={e => setFeishuWebhook(e.target.value)} placeholder="https://..." /></div>
+              <button onClick={saveFeishuConfig}>{feishuLoading ? '保存中...' : '保存配置'}</button>
+              <button onClick={() => setShowFeishuConfig(false)}>取消</button>
+            </div>
+          </div>
+        )}
+    </div>
+  )
+}
+
+export default Elite2026Page

@@ -13,7 +13,8 @@ function StockChart({ code, name }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
-  const [activeType, setActiveType] = useState('intraday');
+  const maSeriesRef = useRef({ ma5: null, ma10: null, ma20: null, ma60: null });
+  const [activeType, setActiveType] = useState('daily');
   const [loading, setLoading] = useState(false);
 
   // 获取K线数据
@@ -78,6 +79,24 @@ function StockChart({ code, name }) {
     return slots;
   };
 
+  // 计算移动平均线
+  const calculateMA = (period, closes, items) => {
+    const result = [];
+    for (let i = 0; i < items.length; i++) {
+      if (i < period - 1) {
+        result.push({ time: new Date(items[i].date + 'T00:00:00Z').getTime() / 1000 });
+      } else {
+        let sum = 0;
+        for (let j = 0; j < period; j++) {
+          sum += closes[i - j];
+        }
+        const avg = sum / period;
+        result.push({ time: new Date(items[i].date + 'T00:00:00Z').getTime() / 1000, value: avg });
+      }
+    }
+    return result;
+  };
+
   // 获取最近交易日日期
   const getLastTradingDate = () => {
     const today = new Date();
@@ -116,6 +135,19 @@ function StockChart({ code, name }) {
       });
       
       seriesRef.current.setData(candleData);
+      
+      // 计算均线
+      const closes = items.map(item => item.close);
+      const ma5 = calculateMA(5, closes, items);
+      const ma10 = calculateMA(10, closes, items);
+      const ma20 = calculateMA(20, closes, items);
+      const ma60 = calculateMA(60, closes, items);
+      
+      // 更新均线系列
+      if (maSeriesRef.current.ma5) maSeriesRef.current.ma5.setData(ma5);
+      if (maSeriesRef.current.ma10) maSeriesRef.current.ma10.setData(ma10);
+      if (maSeriesRef.current.ma20) maSeriesRef.current.ma20.setData(ma20);
+      if (maSeriesRef.current.ma60) maSeriesRef.current.ma60.setData(ma60);
       
       chartRef.current.applyOptions({
         rightPriceScale: {
@@ -244,6 +276,16 @@ function StockChart({ code, name }) {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
+    // 初始化时加载日K数据（延迟执行确保chartRef已创建）
+    setTimeout(() => {
+      createSeries('daily');
+      fetchKLineData('daily');
+    }, 100);
+  }, []);
+
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+
     try {
       const chart = createChart(chartContainerRef.current, {
         layout: {
@@ -339,12 +381,42 @@ function StockChart({ code, name }) {
       let series;
       if (type === 'daily') {
         series = chartRef.current.addSeries(CandlestickSeries, {
-          upColor: '#48bb78',
-          downColor: '#f56565',
-          borderUpColor: '#48bb78',
-          borderDownColor: '#f56565',
-          wickUpColor: '#48bb78',
-          wickDownColor: '#f56565'
+          upColor: '#f56565',
+          downColor: '#48bb78',
+          borderUpColor: '#f56565',
+          borderDownColor: '#48bb78',
+          wickUpColor: '#f56565',
+          wickDownColor: '#48bb78'
+        });
+        
+        // 添加均线系列 (日K)
+        maSeriesRef.current.ma5 = chartRef.current.addSeries(LineSeries, {
+          color: '#e91e63',
+          lineWidth: 1,
+          crosshairMarkerVisible: false,
+          lastValueVisible: false,
+          priceLineVisible: false
+        });
+        maSeriesRef.current.ma10 = chartRef.current.addSeries(LineSeries, {
+          color: '#ff9800',
+          lineWidth: 1,
+          crosshairMarkerVisible: false,
+          lastValueVisible: false,
+          priceLineVisible: false
+        });
+        maSeriesRef.current.ma20 = chartRef.current.addSeries(LineSeries, {
+          color: '#9c27b0',
+          lineWidth: 1,
+          crosshairMarkerVisible: false,
+          lastValueVisible: false,
+          priceLineVisible: false
+        });
+        maSeriesRef.current.ma60 = chartRef.current.addSeries(LineSeries, {
+          color: '#00bcd4',
+          lineWidth: 1,
+          crosshairMarkerVisible: false,
+          lastValueVisible: false,
+          priceLineVisible: false
         });
       } else {
         // 主走势图
@@ -400,6 +472,23 @@ function StockChart({ code, name }) {
     try {
       if (seriesRef.current) {
         chartRef.current.removeSeries(seriesRef.current);
+        // 移除均线系列
+        if (maSeriesRef.current.ma5) {
+          chartRef.current.removeSeries(maSeriesRef.current.ma5);
+          maSeriesRef.current.ma5 = null;
+        }
+        if (maSeriesRef.current.ma10) {
+          chartRef.current.removeSeries(maSeriesRef.current.ma10);
+          maSeriesRef.current.ma10 = null;
+        }
+        if (maSeriesRef.current.ma20) {
+          chartRef.current.removeSeries(maSeriesRef.current.ma20);
+          maSeriesRef.current.ma20 = null;
+        }
+        if (maSeriesRef.current.ma60) {
+          chartRef.current.removeSeries(maSeriesRef.current.ma60);
+          maSeriesRef.current.ma60 = null;
+        }
         // 同时移除基准线和13:00分隔线
         if (seriesRef.current.baselineSeries) {
           chartRef.current.removeSeries(seriesRef.current.baselineSeries);
@@ -440,6 +529,14 @@ function StockChart({ code, name }) {
             日K
           </button>
         </div>
+        {activeType === 'daily' && (
+          <div className="ma-legend">
+            <span className="ma-item"><span className="ma-dot" style={{background: '#e91e63'}}></span>MA5</span>
+            <span className="ma-item"><span className="ma-dot" style={{background: '#ff9800'}}></span>MA10</span>
+            <span className="ma-item"><span className="ma-dot" style={{background: '#9c27b0'}}></span>MA20</span>
+            <span className="ma-item"><span className="ma-dot" style={{background: '#00bcd4'}}></span>MA60</span>
+          </div>
+        )}
       </div>
       <div className="chart-wrapper">
         {loading && <div className="chart-loading">加载中...</div>}

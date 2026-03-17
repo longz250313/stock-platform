@@ -40,7 +40,8 @@ function TradeRuleMonitor({ holdings, onAlert }) {
       if (!holding.currentData) return;
       
       const currentPrice = holding.currentData.current || 0;
-      const avgCost = holding.avgCost || 0;
+      // 优先使用分析数据中的买入价格
+      const avgCost = (holding.analysis && holding.analysis.buyPrice) || holding.avgCost || 0;
       
       if (avgCost <= 0) return;
       

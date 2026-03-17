@@ -216,6 +216,21 @@ class SmartAnalyzer {
     const insight = this.generateInsight(stockData, technical, holding);
     const checklist = this.generateChecklist(stockData, technical, holding);
     
+    const current = stockData.current;
+    const prevClose = stockData.close;
+    const high = stockData.high;
+    const low = stockData.low;
+    const open = stockData.open;
+    
+    const support1 = (current + low) / 2;
+    const support2 = low;
+    const resistance1 = (current + high) / 2;
+    const resistance2 = high;
+    
+    const buyPrice = support1;
+    const stopPrice = support2 * 0.98;
+    const targetPrice = resistance2;
+    
     return {
       code: stockData.code,
       name: stockData.name,
@@ -224,6 +239,13 @@ class SmartAnalyzer {
       technical,
       insight,
       checklist,
+      support1: support1.toFixed(2),
+      support2: support2.toFixed(2),
+      resistance1: resistance1.toFixed(2),
+      resistance2: resistance2.toFixed(2),
+      buyPrice: buyPrice.toFixed(2),
+      stopPrice: stopPrice.toFixed(2),
+      targetPrice: targetPrice.toFixed(2),
       timestamp: new Date().toISOString()
     };
   }
